@@ -180,9 +180,7 @@ for cur_file in files:
 
             cur_pos = 0
             for interval in intervals:
-                movement = interval - cur_pos
-                data.seek(movement, 1 + (interval + interval_size >= filesize))
-                cur_pos += movement
+                data.seek(interval, 0)
                 hasher.update(data.read(interval_size))
                 hashes.append(hasher.hexdigest())
 
