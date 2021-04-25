@@ -80,10 +80,10 @@ while x[0] < len(args):
             "Any phrase or value to set the randomization seed.",
             f"Defaults to \"{seed_phrase}\" (current day)"
         ])
-        info(u, None, [
-            "Uniformly sample the file at equally spaced intervals instead of randomly.",
-            f"Overrides any phrase provided by {bold}-p{end}."
-        ])
+        # info(u, None, [
+        #     "Uniformly sample the file at equally spaced intervals instead of randomly.",
+        #     f"Overrides any phrase provided by {bold}-p{end}."
+        # ])
         info(v, None, [
             "Show verbose information on the parameters and hashing for each file."
         ])
@@ -125,6 +125,10 @@ if use_verbose:
 if len(files) == 0:
     print(f"No files were specified.\nSee {bold}--help{end} for more info.")
 
+if algorithm not in all_algos:
+    print(f"Invalid algorithm: {algorithm}\nSee {bold}--help{end} for more info.")
+    exit(2)
+
 for cur_file in files:
     try:
         with open(cur_file, "rb") as data:
@@ -155,29 +159,32 @@ for cur_file in files:
             else:
                 random.seed(seed_phrase)
                 for x in range(interval_count - 2):
-                    # get a random offset, see that it fits with our current set
-                    for attempt in range(1):
-                        repeatValue = False
-                        target = random.randint(0, filesize) # we sample the full range for consistent ranges in the event of mismatched filesizes
-                        for interval in intervals:
-                            if repeatValue:
-                                break
-                            smaller, larger = min(interval, target), max(interval, target)
-                            if smaller + interval_size > larger:
-                                print(f"problem, {smaller}, {larger}, {smaller + interval_size}")
-                                repeatValue = True
-                            break
-                        if repeatValue:
-                            continue
-                        intervals.append(target)
-                        break
-                    else:
-                        print(f"ERROR: Hit an issue with {cur_file} when choosing partition sizes, can try a different seed phrase")
-                        continue
-                    intervals.sort()
+                    target = random.randint(0, filesize) # we sample the full range for consistent ranges in the event of mismatched filesizes
+                    intervals.append(target)
+                intervals.sort()
+            
+            # go through our intervals, and try to resolve overlaps
+            last_interval = None
+            for x in range(len(intervals)):
+                cur = intervals[x]
+                if x != 0 and (last_interval + interval_size > cur):
+                    # overlapping, push over our next one
+                    intervals[x] = last_interval + interval_size
+                last_interval = intervals[x]
+            
+            # remove any 0-size partitions at the end
+            intervals = list(filter(lambda x: x < filesize, intervals))
 
-            print(intervals)
-            hashes = ["a"] * len(intervals)
+            hashes = []
+            hasher = hashlib.new(algorithm)
+
+            cur_pos = 0
+            for interval in intervals:
+                movement = interval - cur_pos
+                data.seek(movement, 1 + (interval + interval_size >= filesize))
+                cur_pos += movement
+                hasher.update(data.read(interval_size))
+                hashes.append(hasher.hexdigest())
 
             # file info
             if use_verbose:
@@ -185,6 +192,10 @@ for cur_file in files:
                 print(f"\tFilesize: {filesize}")
                 print(f"\tInterval Size: {interval_size}")
                 for x, interval in enumerate(intervals):
-                    print(f"\tsample{x+1}(start: {interval}, end: {interval + interval_size}) = {hashes[x]}")
+                    end = min(interval + interval_size, filesize)
+                    print(f"\t\tsample{x+1}(start: {interval}, end: {end}) = {hashes[x]}")
+                print(f"\tFinal Hash: {hasher.hexdigest()}")
+            else:
+                print(f"{hasher.hexdigest()}  {cur_file}")
     except FileNotFoundError as e:
         print(f"ERROR: Could not open file: \"{cur_file}\"")
