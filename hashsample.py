@@ -11,8 +11,8 @@ now = datetime.datetime.now()
 byte_suffixes = [ "%", "KB", "KiB", "MB", "MiB", "GB", "GiB"]
 cmds = [["-h", "--help"], ["-l", "--list"], ["-a", "--algo"],
     ["-s", "--size"], ["-p", "--phrase"], ["-u", "--uniform"],
-    ["-q", "--quiet"], ["-c", "--count"]]
-h, l, a, s, p, u, q, c = range(8)
+    ["-v", "--verbose"], ["-c", "--count"]]
+h, l, a, s, p, u, v, c = range(8)
 
 # term colors
 bold = '\033[1m'
@@ -39,7 +39,7 @@ sample_size = "1%"      # 1% of the file, for each segment
 interval_count = 10     # ten segments (10% total)
 seed_phrase = now.strftime('%Y-%m-%d')
 use_uniform = False
-use_verbose = True
+use_verbose = False
 files = []
 
 def has_next(arg, xp):
@@ -84,8 +84,8 @@ while x[0] < len(args):
             "Uniformly sample the file at equally spaced intervals instead of randomly.",
             f"Overrides any phrase provided by {bold}-p{end}."
         ])
-        info(q, None, [
-            "Only print the result of the hashing, instead of including verbose info."
+        info(v, None, [
+            "Show verbose information on the parameters and hashing for each file."
         ])
         info(h, None, ["Display this helper text."])
         print(f"Please report issues at: https://github.com/vgmoose/hash-sample\nThank you! {random.choice(['🌱','☘️']*10 + ['🍀'])}")
@@ -99,17 +99,92 @@ while x[0] < len(args):
     elif arg in cmds[s]:
         sample_size = has_next(arg, x)
     elif arg in cmds[c]:
-        interval_count = has_next(arg, x)
+        interval_count = int(has_next(arg, x))
     elif arg in cmds[p]:
         seed_phrase = has_next(arg, x)
     elif arg in cmds[u]:
         use_uniform = True
-    elif arg in cmds[q]:
-        use_verbose = False
+    elif arg in cmds[v]:
+        use_verbose = True
     else:
         # another param that wasn't an option, it should be a file
         files.append(arg)
     x[0] += 1
 
+if use_verbose:
+    print("Parameters:")
+    print(f"\tAlgorithm: {algorithm}")
+    print(f"\tSample Size: {sample_size}")
+    print(f"\tInterval Count: {interval_count}")
+    if use_uniform:
+        print("\tUniform Sampling")
+    else:
+        print(f"\tSeed Phrase: {seed_phrase}")
+    print(f"\tVersion: {version}\n")
+
 if len(files) == 0:
     print(f"No files were specified.\nSee {bold}--help{end} for more info.")
+
+for cur_file in files:
+    try:
+        with open(cur_file, "rb") as data:
+            filesize = os.stat(cur_file).st_size
+
+            # figure out how many bytes we're using for our interval size
+            for x, suffix in enumerate(byte_suffixes):
+                if sample_size.endswith(suffix):
+                    if suffix == "%":
+                        interval_size = int(filesize * (int(sample_size[:-1]) * 0.01))
+                        break
+                    base = (1000 + (x % 2 == 0) * 24) ** ((x+1) // 2)
+                    interval_size = int(sample_size[:-len(suffix)]) * base
+                    break
+            else:
+                # bytes directly?
+                interval_size = int(sample_size)
+            
+            if interval_size * interval_count > filesize:
+                # too much data requested
+                print(f"ERROR: Too much data requested for {cur_file}. {interval_size}*{interval_count} (size*count) is {interval_size * interval_count}, which is bigger than the filesize of {filesize}")
+                continue
+            
+            # always take the first and last interval_size bytes, regardless of anything
+            intervals = [0, filesize - interval_size]
+            if use_uniform:
+                pass
+            else:
+                random.seed(seed_phrase)
+                for x in range(interval_count - 2):
+                    # get a random offset, see that it fits with our current set
+                    for attempt in range(1):
+                        repeatValue = False
+                        target = random.randint(0, filesize) # we sample the full range for consistent ranges in the event of mismatched filesizes
+                        for interval in intervals:
+                            if repeatValue:
+                                break
+                            smaller, larger = min(interval, target), max(interval, target)
+                            if smaller + interval_size > larger:
+                                print(f"problem, {smaller}, {larger}, {smaller + interval_size}")
+                                repeatValue = True
+                            break
+                        if repeatValue:
+                            continue
+                        intervals.append(target)
+                        break
+                    else:
+                        print(f"ERROR: Hit an issue with {cur_file} when choosing partition sizes, can try a different seed phrase")
+                        continue
+                    intervals.sort()
+
+            print(intervals)
+            hashes = ["a"] * len(intervals)
+
+            # file info
+            if use_verbose:
+                print(f"File: {cur_file}")
+                print(f"\tFilesize: {filesize}")
+                print(f"\tInterval Size: {interval_size}")
+                for x, interval in enumerate(intervals):
+                    print(f"\tsample{x+1}(start: {interval}, end: {interval + interval_size}) = {hashes[x]}")
+    except FileNotFoundError as e:
+        print(f"ERROR: Could not open file: \"{cur_file}\"")
